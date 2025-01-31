@@ -15,6 +15,49 @@ function processHexInput(input) {
   return Buffer.from(hexString, 'hex');
 }
 
+// Helper function to detect if content is text
+function isTextContent(buffer) {
+  // Check if the buffer contains valid UTF-8 text
+  try {
+    // Convert buffer to string and back to buffer
+    const text = buffer.toString('utf8');
+    const backToBuffer = Buffer.from(text, 'utf8');
+    
+    // If the buffers match and don't contain control characters (except newline and tab)
+    return buffer.equals(backToBuffer) && 
+           !buffer.some(byte => (byte < 32 && byte !== 9 && byte !== 10) || byte === 127);
+  } catch {
+    return false;
+  }
+}
+
+// Helper function to get content type
+function detectContentType(buffer) {
+  // Check for common file signatures
+  if (buffer.length >= 4) {
+    // PDF signature
+    if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) {
+      return 'application/pdf';
+    }
+    // JPEG signature
+    if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+      return 'image/jpeg';
+    }
+    // PNG signature
+    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+      return 'image/png';
+    }
+  }
+
+  // Check if it's text content
+  if (isTextContent(buffer)) {
+    return 'text/plain';
+  }
+
+  // Default to binary
+  return 'application/octet-stream';
+}
+
 // Main bundle route
 app.get('/bundle/:txHash/:index', async (req, res) => {
   try {
@@ -46,17 +89,15 @@ app.get('/bundle/:txHash/:index', async (req, res) => {
 
     const envelope = data.envelopes[envelopeIndex];
     
-    // Get input and content type
+    // Get input
     const input = envelope.input;
-    const contentTypeTag = envelope.tags?.find(tag => tag.name === 'content-type');
     
     if (!input) {
       return res.status(400).json({ error: 'No input data found in envelope' });
     }
 
-    if (!contentTypeTag) {
-      return res.status(400).json({ error: 'No content-type tag found in envelope' });
-    }
+    // Get content type tag if it exists (case-insensitive)
+    const contentTypeTag = envelope.tags?.find(tag => tag.name.toLowerCase() === 'content-type');
 
     // Process the input data
     let processedData;
@@ -70,7 +111,7 @@ app.get('/bundle/:txHash/:index', async (req, res) => {
 
     // Set response headers
     res.set({
-      'Content-Type': contentTypeTag.value,
+      'Content-Type': contentTypeTag?.value || detectContentType(processedData),
       'Content-Length': processedData.length,
       'Cache-Control': 'public, max-age=31536000'
     });
